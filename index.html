@@ -1,0 +1,353 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#090d1b">
+<meta name="description" content="Build the tallest tower you can! Test your timing in Don't Break the Tower, a free arcade stacking game.">
+<title>Don't Break the Tower | Free Arcade Game</title>
+<style>
+*{box-sizing:border-box}
+body{
+ margin:0;background:#090d1b;color:white;
+ font-family:Arial,sans-serif;overflow:hidden;
+ user-select:none;touch-action:manipulation
+}
+#app{
+ min-height:100vh;display:flex;flex-direction:column;
+ align-items:center;justify-content:center;padding:16px;
+ background:radial-gradient(ellipse at 50% 35%,#19234a 0%,#090d1b 70%)
+}
+header{width:min(540px,100%);display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.logo{font-size:17px;font-weight:900;letter-spacing:1px}
+.logo span{color:#54e7ff}
+.stats{display:flex;gap:10px}
+.stat{background:#ffffff10;border:1px solid #ffffff20;border-radius:12px;padding:9px 13px;text-align:center;min-width:75px}
+.stat small{display:block;color:#9ba8c8;font-size:10px;text-transform:uppercase}
+.stat strong{font-size:19px}
+#game{
+ width:min(540px,100%);height:min(65vh,520px);
+ min-height:320px;border:1px solid #ffffff25;border-radius:18px;
+ background:linear-gradient(180deg,#111b3b,#10172c);
+ box-shadow:0 20px 70px #0008;display:block
+}
+.hint{color:#9ba8c8;font-size:13px;margin:13px 0}
+button{
+ border:0;border-radius:12px;padding:13px 20px;
+ background:linear-gradient(135deg,#42ddff,#7377ff);
+ color:#07101f;font-weight:900;font-size:14px;cursor:pointer
+}
+button:active{transform:scale(.97)}
+.controls{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+.secondary{background:#ffffff16;color:white;border:1px solid #ffffff25}
+.overlay{
+ position:fixed;inset:0;background:#050817d9;display:flex;
+ align-items:center;justify-content:center;padding:20px;z-index:5
+}
+.panel{
+ width:min(390px,100%);padding:30px 24px;text-align:center;
+ border:1px solid #ffffff30;border-radius:22px;
+ background:linear-gradient(145deg,#19244a,#10172c);
+ box-shadow:0 20px 80px #0009
+}
+.panel h1{font-size:34px;margin:0 0 10px}
+.panel p{color:#b8c4e2;line-height:1.5}
+.panel .big{font-size:48px;font-weight:900;color:#58e7ff;margin:12px}
+.panel button{width:100%;margin-top:10px}
+.hidden{display:none!important}
+footer{font-size:11px;color:#687593;margin-top:15px}
+@media(max-height:650px){
+ #game{height:55vh;min-height:260px}
+ #app{padding:8px}
+}
+</style>
+</head>
+<body>
+<div id="app">
+ <header>
+  <div class="logo">DON'T BREAK <span>THE TOWER</span></div>
+  <div class="stats">
+   <div class="stat"><small>Score</small><strong id="score">0</strong></div>
+   <div class="stat"><small>Best</small><strong id="best">0</strong></div>
+  </div>
+ </header>
+ <canvas id="game"></canvas>
+ <div class="hint" id="hint">Tap the screen or press SPACE to drop a block</div>
+ <div class="controls">
+  <button id="drop">DROP BLOCK</button>
+  <button class="secondary" id="sound">🔊 Sound ON</button>
+  <button class="secondary" id="pause">Ⅱ Pause</button>
+ </div>
+ <footer>Free arcade game · Built for fun · Challenge your friends</footer>
+</div>
+
+<div class="overlay" id="startScreen">
+ <div class="panel">
+  <div style="font-size:48px">🏗️</div>
+  <h1>DON'T BREAK<br>THE TOWER</h1>
+  <p>Stack the blocks. Aim for perfect drops. Build the tallest tower you can!</p>
+  <p>🎯 Perfect placement = bonus points</p>
+  <button id="start">PLAY NOW</button>
+ </div>
+</div>
+
+<div class="overlay hidden" id="endScreen">
+ <div class="panel">
+  <div style="font-size:42px">💥</div>
+  <h1>TOWER DOWN!</h1>
+  <p>Your final score</p>
+  <div class="big" id="finalScore">0</div>
+  <p id="resultMessage">Can you do better?</p>
+  <button id="again">PLAY AGAIN</button>
+  <button class="secondary" id="share">SHARE YOUR SCORE</button>
+ </div>
+</div>
+
+<div class="overlay hidden" id="pauseScreen">
+ <div class="panel">
+  <h1>PAUSED</h1>
+  <p>Your tower is waiting.</p>
+  <button id="resume">CONTINUE</button>
+ </div>
+</div>
+
+<script>
+const canvas=document.getElementById("game");
+const ctx=canvas.getContext("2d");
+const $=id=>document.getElementById(id);
+
+let W=540,H=520,blocks=[],moving=null,score=0,best=0;
+let speed=2.5,direction=1,playing=false,paused=false;
+let soundOn=true,combo=0,frame=0,audio=null;
+const blockH=22,baseWidth=170;
+
+try{best=Number(localStorage.getItem("towerBest"))||0}catch(e){}
+$("best").textContent=best;
+
+function resize(){
+ const r=canvas.getBoundingClientRect();
+ const dpr=Math.min(window.devicePixelRatio||1,2);
+ W=r.width;H=r.height;
+ canvas.width=Math.round(W*dpr);
+ canvas.height=Math.round(H*dpr);
+ ctx.setTransform(dpr,0,0,dpr,0,0);
+ draw();
+}
+window.addEventListener("resize",resize);
+
+function tone(freq=440,duration=.07){
+ if(!soundOn)return;
+ try{
+  audio=audio||new(window.AudioContext||window.webkitAudioContext)();
+  const o=audio.createOscillator(),g=audio.createGain();
+  o.frequency.value=freq;o.type="sine";
+  g.gain.setValueAtTime(.07,audio.currentTime);
+  g.gain.exponentialRampToValueAtTime(.001,audio.currentTime+duration);
+  o.connect(g);g.connect(audio.destination);
+  o.start();o.stop(audio.currentTime+duration);
+ }catch(e){}
+}
+
+function reset(){
+ score=0;speed=2.5;combo=0;frame=0;
+ blocks=[];
+ const width=Math.min(baseWidth,W*.48);
+ blocks.push({x:(W-width)/2,y:H-35,w:width,h:blockH,color:"#39d9ff"});
+ moving={x:0,y:H-35-blockH,w:width,h:blockH,color:"#8b7cff"};
+ direction=1;playing=true;paused=false;
+ $("score").textContent=0;
+ $("hint").textContent="Tap the screen or press SPACE to drop a block";
+ $("startScreen").classList.add("hidden");
+ $("endScreen").classList.add("hidden");
+ $("pauseScreen").classList.add("hidden");
+ draw();
+}
+
+function colorFor(n){
+ const colors=["#43dfff","#817aff","#ff64bd","#ffb84a","#72edb1","#ae8bff"];
+ return colors[n%colors.length];
+}
+
+function draw(){
+ ctx.clearRect(0,0,W,H);
+ const grad=ctx.createLinearGradient(0,0,0,H);
+ grad.addColorStop(0,"#121e40");grad.addColorStop(1,"#10152b");
+ ctx.fillStyle=grad;ctx.fillRect(0,0,W,H);
+
+ // Background stars
+ for(let i=0;i<32;i++){
+  const x=(i*97+23)%W,y=(i*67+13)%H;
+  ctx.fillStyle="#ffffff25";
+  ctx.fillRect(x,y,2,2);
+ }
+
+ // Ground
+ ctx.fillStyle="#26355d";
+ ctx.fillRect(0,H-12,W,12);
+
+ // Tower
+ blocks.forEach((b,i)=>drawBlock(b));
+
+ if(moving)drawBlock(moving);
+
+ ctx.fillStyle="#ffffff20";
+ ctx.font="12px Arial";
+ ctx.textAlign="center";
+ ctx.fillText("BUILD YOUR TOWER",W/2,25);
+}
+
+function drawBlock(b){
+ ctx.save();
+ ctx.shadowColor=b.color;
+ ctx.shadowBlur=12;
+ const g=ctx.createLinearGradient(b.x,b.y,b.x+b.w,b.y+b.h);
+ g.addColorStop(0,b.color);g.addColorStop(1,"#5969df");
+ ctx.fillStyle=g;
+ ctx.fillRect(b.x,b.y,b.w,b.h);
+ ctx.shadowBlur=0;
+ ctx.fillStyle="#ffffff35";
+ ctx.fillRect(b.x,b.y,b.w,3);
+ ctx.strokeStyle="#ffffff55";
+ ctx.lineWidth=1;
+ ctx.strokeRect(b.x,b.y,b.w,b.h);
+ ctx.restore();
+}
+
+function drop(){
+ if(!playing||paused||!moving)return;
+ tone(520);
+ const previous=blocks[blocks.length-1];
+ const left=Math.max(moving.x,previous.x);
+ const right=Math.min(moving.x+moving.w,previous.x+previous.w);
+ const overlap=right-left;
+
+ if(overlap<=0){
+  combo=0;gameOver();return;
+ }
+
+ const difference=Math.abs(moving.w-overlap);
+ const perfect=difference<5;
+
+ if(perfect){
+  combo++;
+  score+=10+combo*2;
+  tone(850,.12);
+  $("hint").textContent="✨ PERFECT! Combo x"+combo;
+ }else{
+  combo=0;
+  score+=10;
+  $("hint").textContent="Nice placement!";
+ }
+
+ const newBlock={
+  x:left,y:moving.y,w:overlap,h:blockH,
+  color:colorFor(blocks.length)
+ };
+ blocks.push(newBlock);
+ score=Math.round(score);
+ $("score").textContent=score;
+
+ if(score>best){
+  best=score;$("best").textContent=best;
+  try{localStorage.setItem("towerBest",best)}catch(e){}
+ }
+
+ if(difference>5){
+  // The overhanging part falls away visually.
+  const cutX=moving.x<previous.x?moving.x:left+overlap;
+  draw();
+  ctx.fillStyle="#ff596b";
+  ctx.globalAlpha=.5;
+  ctx.fillRect(cutX,moving.y,difference,blockH);
+  ctx.globalAlpha=1;
+ }
+
+ // Shift the tower up as it grows.
+ if(blocks.length>Math.floor((H-80)/blockH)){
+  blocks.forEach(b=>b.y+=blockH);
+ }
+
+ speed=Math.min(2.5+score*.012,7);
+ direction=1;
+ moving={
+  x:0,y:newBlock.y-blockH,w:newBlock.w,h:blockH,
+  color:colorFor(blocks.length)
+ };
+ tone(600,.05);
+ draw();
+}
+
+function gameOver(){
+ playing=false;moving=null;
+ tone(140,.35);
+ $("finalScore").textContent=score;
+ $("resultMessage").textContent=
+  score>best/2?"Great effort! Try to beat your best.":"Keep practising. Your next tower could be huge!";
+ $("endScreen").classList.remove("hidden");
+}
+
+function loop(){
+ requestAnimationFrame(loop);
+ if(!playing||paused||!moving)return;
+ frame++;
+ moving.x+=speed*direction;
+ if(moving.x+moving.w>=W){
+  moving.x=W-moving.w;direction=-1;
+ }
+ if(moving.x<=0){
+  moving.x=0;direction=1;
+ }
+ if(frame%2===0)draw();
+}
+
+function pauseGame(){
+ if(!playing)return;
+ paused=true;
+ $("pauseScreen").classList.remove("hidden");
+}
+function resumeGame(){
+ paused=false;
+ $("pauseScreen").classList.add("hidden");
+}
+
+$("start").onclick=reset;
+$("again").onclick=reset;
+$("drop").onclick=drop;
+$("pause").onclick=pauseGame;
+$("resume").onclick=resumeGame;
+$("sound").onclick=()=>{
+ soundOn=!soundOn;
+ $("sound").textContent=soundOn?"🔊 Sound ON":"🔇 Sound OFF";
+ tone(500);
+};
+$("share").onclick=async()=>{
+ const text="I scored "+score+" in DON'T BREAK THE TOWER! Can you beat me? "+location.href;
+ try{
+  if(navigator.share)await navigator.share({title:"Don't Break the Tower",text,url:location.href});
+  else if(navigator.clipboard){
+   await navigator.clipboard.writeText(text);
+   $("resultMessage").textContent="Score challenge copied! Share it with friends.";
+  }else{
+   $("resultMessage").textContent=text;
+  }
+ }catch(e){}
+};
+
+canvas.addEventListener("pointerdown",e=>{
+ if(playing&&!paused)drop();
+});
+window.addEventListener("keydown",e=>{
+ if(e.code==="Space"){
+  e.preventDefault();drop();
+ }
+ if(e.code==="Escape"){
+  if(paused)resumeGame();else pauseGame();
+ }
+});
+
+resize();
+loop();
+</script>
+</body>
+</html>
